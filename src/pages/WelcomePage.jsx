@@ -23,7 +23,7 @@ export default function WelcomePage({ onCreateAccount }) {
           marginTop: '10vh',
         }}
       >
-        <PriorioLogo size={130} />
+        <PriorioLogo size={300} />
         <h1
           style={{
             fontFamily: "'Playfair Display', Georgia, 'Times New Roman', serif",
