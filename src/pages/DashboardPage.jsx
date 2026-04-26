@@ -1,5 +1,41 @@
-import { useState } from 'react'
-import { COURSES, WEEK, TASKS } from '../data/tasks'
+import { useState, useMemo, useEffect, useCallback } from 'react'
+import canvasData from '../data/canvas-snapshot.json'
+import { initGoogleAuth, connectGoogleCalendar, isGoogleConnected, fetchCalendarEvents } from '../services/googleCalendar'
+
+function getMonday(date) {
+  const d = new Date(date)
+  d.setHours(0, 0, 0, 0)
+  const day = d.getDay()
+  d.setDate(d.getDate() + (day === 0 ? -6 : 1 - day))
+  return d
+}
+
+function buildWeek(weekOffset) {
+  const monday = getMonday(new Date())
+  monday.setDate(monday.getDate() + weekOffset * 7)
+  return Array.from({ length: 5 }, (_, i) => {
+    const d = new Date(monday)
+    d.setDate(monday.getDate() + i)
+    return { date: d.getDate(), day: ['MON', 'TUE', 'WED', 'THU', 'FRI'][i], fullDate: d }
+  })
+}
+
+function getTasksForWeek(tasks, weekOffset) {
+  const monday = getMonday(new Date())
+  monday.setDate(monday.getDate() + weekOffset * 7)
+  const weekStart = new Date(monday); weekStart.setDate(monday.getDate() - 1)
+  const weekEnd = new Date(monday); weekEnd.setDate(monday.getDate() + 7)
+  return tasks
+    .filter(t => {
+      if (!t.dueDateISO) return false
+      const due = new Date(t.dueDateISO)
+      return due >= weekStart && due < weekEnd
+    })
+    .map(t => ({
+      ...t,
+      dayIndex: Math.floor((new Date(t.dueDateISO) - monday) / 86400000),
+    }))
+}
 import TaskModal from '../components/TaskModal'
 import CalendarView from '../components/CalendarView'
 
@@ -12,13 +48,13 @@ const SUGGESTIONS = [
 
 // ─── Task Card ────────────────────────────────────────────────────────────────
 
-function TaskCard({ task, onClick }) {
-  const course = COURSES[task.course]
+function TaskCard({ task, courses, onClick }) {
+  const course = courses[task.course]
   return (
     <div
       onClick={() => onClick(task)}
       style={{
-        backgroundColor: course.bg,
+        backgroundColor: course?.bg ?? '#f3f4f6',
         borderRadius: '10px',
         padding: '0.625rem 0.75rem',
         marginBottom: '0.5rem',
@@ -36,7 +72,7 @@ function TaskCard({ task, onClick }) {
       >
         {task.title}
       </p>
-      {task.description ? (
+      {task.summary ? (
         <p
           style={{
             fontSize: '0.78rem',
@@ -49,7 +85,7 @@ function TaskCard({ task, onClick }) {
             overflow: 'hidden',
           }}
         >
-          {task.description}
+          {task.summary}
         </p>
       ) : (
         <p style={{ fontSize: '0.78rem', color: '#6b7280', margin: 0, fontStyle: 'italic' }}>
@@ -96,13 +132,56 @@ function Toggle({ checked, onChange }) {
 
 // ─── Left Panel ───────────────────────────────────────────────────────────────
 
-function WeeklyPanel({ onTaskClick }) {
+function getInitialWeekOffset(tasks) {
+  const today = new Date()
+  for (let offset = 0; offset <= 8; offset++) {
+    const week = buildWeek(offset)
+    const weekStart = new Date(week[0].fullDate); weekStart.setDate(weekStart.getDate() - 1)
+    const weekEnd = new Date(week[4].fullDate); weekEnd.setDate(weekEnd.getDate() + 1)
+    const hasTask = tasks.some(t => {
+      if (!t.dueDateISO) return false
+      const due = new Date(t.dueDateISO)
+      return due >= today && due >= weekStart && due < weekEnd
+    })
+    if (hasTask) return offset
+  }
+  return 0
+}
+
+function WeeklyPanel({ courses, allTasks, onTaskClick, gcConnected, onConnectGC }) {
+  const [weekOffset, setWeekOffset] = useState(() => getInitialWeekOffset(allTasks))
   const [startDay, setStartDay] = useState(0)
   const [gcView, setGcView] = useState(false)
+  const [gcEvents, setGcEvents] = useState([])
 
-  const visibleDays = WEEK.slice(startDay, startDay + 3)
-  const canGoBack = startDay > 0
-  const canGoForward = startDay + 3 < WEEK.length
+  const week = useMemo(() => buildWeek(weekOffset), [weekOffset])
+  const tasks = useMemo(() => getTasksForWeek(allTasks, weekOffset), [allTasks, weekOffset])
+
+  const loadGcEvents = useCallback(async (offset) => {
+    console.log('[GC] loadGcEvents called, gcConnected=', gcConnected)
+    if (!gcConnected) return
+    const w = buildWeek(offset)
+    const timeMin = new Date(w[0].fullDate); timeMin.setDate(timeMin.getDate() - 1)
+    const timeMax = new Date(w[4].fullDate); timeMax.setDate(timeMax.getDate() + 1)
+    console.log('[GC] fetching events', timeMin.toISOString(), '→', timeMax.toISOString())
+    try {
+      const events = await fetchCalendarEvents(timeMin, timeMax)
+      console.log('[GC] got events:', events.length, events.map(e => e.summary))
+      setGcEvents(events)
+    } catch (err) {
+      console.error('[GC] fetch error:', err)
+      setGcEvents([])
+    }
+  }, [gcConnected])
+
+  useEffect(() => {
+    console.log('[GC] effect fired, gcView=', gcView, 'gcConnected=', gcConnected)
+    if (gcView) loadGcEvents(weekOffset)
+  }, [gcView, weekOffset, gcConnected, loadGcEvents])
+
+  const visibleDays = week.slice(startDay, startDay + 3)
+  const canGoBack = startDay > 0 || weekOffset > 0
+  const canGoForward = startDay + 3 < week.length || true
 
   return (
     <div
@@ -139,7 +218,7 @@ function WeeklyPanel({ onTaskClick }) {
           {/* Course legend — canvas view only */}
           {!gcView && (
             <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap', marginTop: '0.5rem' }}>
-              {Object.entries(COURSES).map(([name, { color }]) => (
+              {Object.entries(courses).map(([name, { color }]) => (
                 <div key={name} style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
                   <span
                     style={{
@@ -158,32 +237,49 @@ function WeeklyPanel({ onTaskClick }) {
           )}
         </div>
 
-        {/* View toggle */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexShrink: 0 }}>
-          <span
+        {/* View toggle + GC connect */}
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '0.5rem', flexShrink: 0 }}>
+          <button
+            onClick={gcConnected ? undefined : onConnectGC}
             style={{
-              fontSize: '0.78rem',
-              color: gcView ? '#9ca3af' : '#111827',
-              fontWeight: gcView ? 400 : 500,
+              backgroundColor: gcConnected ? '#16a34a' : NAVY,
+              color: '#fff',
+              border: 'none',
+              borderRadius: '6px',
+              padding: '0.3rem 0.75rem',
+              fontSize: '0.75rem',
+              fontWeight: 500,
+              cursor: gcConnected ? 'default' : 'pointer',
             }}
           >
-            Canvas Workload View
-          </span>
-          <Toggle checked={gcView} onChange={setGcView} />
-          <span
-            style={{
-              fontSize: '0.78rem',
-              color: gcView ? '#111827' : '#9ca3af',
-              fontWeight: gcView ? 500 : 400,
-            }}
-          >
-            Google Calendar View
-          </span>
+            {gcConnected ? '✓ Google Calendar Connected' : 'Connect Google Calendar'}
+          </button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            <span
+              style={{
+                fontSize: '0.78rem',
+                color: gcView ? '#9ca3af' : '#111827',
+                fontWeight: gcView ? 400 : 500,
+              }}
+            >
+              Canvas Workload View
+            </span>
+            <Toggle checked={gcView} onChange={setGcView} />
+            <span
+              style={{
+                fontSize: '0.78rem',
+                color: gcView ? '#111827' : '#9ca3af',
+                fontWeight: gcView ? 500 : 400,
+              }}
+            >
+              Google Calendar View
+            </span>
+          </div>
         </div>
       </div>
 
       {/* ── Google Calendar View ── */}
-      {gcView && <CalendarView />}
+      {gcView && <CalendarView events={gcEvents} weekOffset={weekOffset} onWeekChange={(o) => { setWeekOffset(o); setStartDay(0) }} />}
 
       {/* ── Canvas Workload View ── */}
       {!gcView && (
@@ -198,12 +294,15 @@ function WeeklyPanel({ onTaskClick }) {
             }}
           >
             <button
-              onClick={() => canGoBack && setStartDay((d) => d - 1)}
+              onClick={() => {
+                if (startDay > 0) setStartDay(d => d - 1)
+                else { setWeekOffset(w => w - 1); setStartDay(2) }
+              }}
               style={{
                 background: 'none',
                 border: 'none',
-                cursor: canGoBack ? 'pointer' : 'default',
-                color: canGoBack ? '#374151' : '#d1d5db',
+                cursor: 'pointer',
+                color: '#374151',
                 fontSize: '1rem',
                 padding: '0 0.5rem 0 0',
                 lineHeight: 1,
@@ -224,12 +323,15 @@ function WeeklyPanel({ onTaskClick }) {
               ))}
             </div>
             <button
-              onClick={() => canGoForward && setStartDay((d) => d + 1)}
+              onClick={() => {
+                if (startDay + 3 < week.length) setStartDay(d => d + 1)
+                else { setWeekOffset(w => w + 1); setStartDay(0) }
+              }}
               style={{
                 background: 'none',
                 border: 'none',
-                cursor: canGoForward ? 'pointer' : 'default',
-                color: canGoForward ? '#374151' : '#d1d5db',
+                cursor: 'pointer',
+                color: '#374151',
                 fontSize: '1rem',
                 padding: '0 0 0 0.5rem',
                 lineHeight: 1,
@@ -243,14 +345,14 @@ function WeeklyPanel({ onTaskClick }) {
           <div style={{ display: 'flex', gap: '0.5rem', flex: 1, overflow: 'hidden' }}>
             <div style={{ width: '20px', flexShrink: 0 }} />
             {visibleDays.map((d, colIdx) => {
-              const dayTasks = TASKS.filter((t) => t.dayIndex === startDay + colIdx)
+              const dayTasks = tasks.filter((t) => t.dayIndex === startDay + colIdx)
               return (
                 <div
                   key={d.day}
                   style={{ flex: 1, overflowY: 'auto', paddingBottom: '0.5rem' }}
                 >
                   {dayTasks.map((task) => (
-                    <TaskCard key={task.id} task={task} onClick={onTaskClick} />
+                    <TaskCard key={task.id} task={task} courses={courses} onClick={onTaskClick} />
                   ))}
                 </div>
               )
@@ -393,6 +495,19 @@ function ChatPanel() {
 
 export default function DashboardPage() {
   const [selectedTask, setSelectedTask] = useState(null)
+  const [gcConnected, setGcConnected] = useState(false)
+  const { courses, tasks: allTasks } = canvasData
+
+  useEffect(() => {
+    const tryInit = () => {
+      if (window.google) {
+        initGoogleAuth(() => setGcConnected(true))
+      } else {
+        setTimeout(tryInit, 300)
+      }
+    }
+    tryInit()
+  }, [])
 
   return (
     <div style={{ display: 'flex', height: '100vh', overflow: 'hidden', backgroundColor: '#ffffff' }}>
@@ -407,9 +522,9 @@ export default function DashboardPage() {
           flexDirection: 'column',
         }}
       >
-        <WeeklyPanel onTaskClick={setSelectedTask} />
+        <WeeklyPanel courses={courses} allTasks={allTasks} onTaskClick={setSelectedTask} gcConnected={gcConnected} onConnectGC={connectGoogleCalendar} />
         {selectedTask && (
-          <TaskModal task={selectedTask} onClose={() => setSelectedTask(null)} />
+          <TaskModal task={selectedTask} courses={courses} gcConnected={gcConnected} onConnectGC={connectGoogleCalendar} onClose={() => setSelectedTask(null)} />
         )}
       </div>
 

@@ -2,7 +2,7 @@ import PriorioLogo from '../components/PriorioLogo'
 
 const NAVY = '#1e3a6e'
 
-export default function WelcomePage({ onCreateAccount }) {
+export default function WelcomePage({ onCreateAccount, onSignIn }) {
   return (
     <div
       style={{
@@ -78,16 +78,20 @@ export default function WelcomePage({ onCreateAccount }) {
         >
           Create an Account
         </button>
-        <a
-          href="#"
+        <button
+          onClick={onSignIn}
           style={{
+            background: 'none',
+            border: 'none',
             color: NAVY,
             fontSize: '0.875rem',
             textDecoration: 'underline',
+            cursor: 'pointer',
+            padding: 0,
           }}
         >
           Already have an account? Sign in!
-        </a>
+        </button>
       </div>
     </div>
   )

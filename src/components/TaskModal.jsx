@@ -1,4 +1,5 @@
-import { COURSES } from '../data/tasks'
+import { useState } from 'react'
+import { addToGoogleCalendar } from '../services/googleCalendar'
 
 const NAVY = '#1e3a6e'
 
@@ -16,23 +17,27 @@ function ExternalLinkIcon() {
   )
 }
 
-export default function TaskModal({ task, onClose }) {
+export default function TaskModal({ task, courses, gcConnected, onConnectGC, onClose }) {
+  const [gcStatus, setGcStatus] = useState(null) // null | 'adding' | 'added' | 'error'
+
   if (!task) return null
-  const course = COURSES[task.course]
+  const course = courses[task.course] ?? { color: '#6b7280', bg: '#f3f4f6' }
+
+  const handleAddToCalendar = async () => {
+    if (!gcConnected) { onConnectGC(); return }
+    setGcStatus('adding')
+    try {
+      await addToGoogleCalendar(task)
+      setGcStatus('added')
+    } catch {
+      setGcStatus('error')
+    }
+  }
 
   return (
     <>
-      {/* Invisible backdrop to catch outside clicks */}
-      <div
-        onClick={onClose}
-        style={{
-          position: 'absolute',
-          inset: 0,
-          zIndex: 40,
-        }}
-      />
+      <div onClick={onClose} style={{ position: 'absolute', inset: 0, zIndex: 40 }} />
 
-      {/* Modal card */}
       <div
         onClick={(e) => e.stopPropagation()}
         style={{
@@ -76,26 +81,12 @@ export default function TaskModal({ task, onClose }) {
         </button>
 
         {/* Title */}
-        <h2
-          style={{
-            fontSize: '1.1rem',
-            fontWeight: 700,
-            color: '#111827',
-            margin: '0 2rem 0.375rem 0',
-          }}
-        >
+        <h2 style={{ fontSize: '1.1rem', fontWeight: 700, color: '#111827', margin: '0 2rem 0.375rem 0' }}>
           {task.title}
         </h2>
 
         {/* Course badge */}
-        <div
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: '6px',
-            marginBottom: '1rem',
-          }}
-        >
+        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '1rem' }}>
           <span
             style={{
               display: 'inline-block',
@@ -116,74 +107,26 @@ export default function TaskModal({ task, onClose }) {
           <span style={{ fontSize: '0.9rem', color: '#111827' }}>{task.dueDate}</span>
         </div>
 
-        {/* Assignment Summary box */}
-        {task.summary && (
+        {/* Assignment Description (Canvas HTML) */}
+        {task.description && (
           <div style={{ marginBottom: '1.25rem' }}>
-            <p
-              style={{
-                fontSize: '0.8rem',
-                color: '#6b7280',
-                margin: '0 0 0.375rem',
-              }}
-            >
-              Assignment Summary:
+            <p style={{ fontSize: '0.8rem', color: '#6b7280', margin: '0 0 0.375rem' }}>
+              Assignment Description:
             </p>
             <div
               style={{
-                backgroundColor: NAVY,
+                backgroundColor: '#f1f5f9',
                 borderRadius: '8px',
                 padding: '0.875rem 1rem',
-                color: '#ffffff',
                 fontSize: '0.875rem',
-                lineHeight: 1.5,
+                lineHeight: 1.6,
               }}
             >
-              {task.summary}
+              <div
+                dangerouslySetInnerHTML={{ __html: task.description }}
+                style={{ color: '#111827', fontSize: '0.875rem', lineHeight: 1.6 }}
+              />
             </div>
-          </div>
-        )}
-
-        {/* Details */}
-        {(task.readings.length > 0 || task.boldNote || task.note) && (
-          <div style={{ marginBottom: '1rem' }}>
-            <p style={{ fontSize: '0.85rem', color: '#374151', margin: '0 0 0.25rem', fontWeight: 500 }}>
-              Details:
-            </p>
-            {task.readings.length > 0 && (
-              <>
-                <p style={{ fontSize: '0.875rem', color: '#111827', margin: '0 0 0.25rem' }}>
-                  Readings:
-                </p>
-                <ul style={{ margin: '0 0 0.5rem', paddingLeft: '1.25rem', fontSize: '0.875rem', color: '#111827' }}>
-                  {task.readings.map((r, i) => (
-                    <li key={i} style={{ marginBottom: '0.2rem' }}>
-                      {r.text}
-                      {r.subitems.length > 0 && (
-                        <ul style={{ paddingLeft: '1rem', marginTop: '0.2rem' }}>
-                          {r.subitems.map((s, j) => (
-                            <li key={j}>{s}</li>
-                          ))}
-                        </ul>
-                      )}
-                    </li>
-                  ))}
-                </ul>
-              </>
-            )}
-            {task.boldNote && (
-              <p style={{ fontSize: '0.875rem', color: '#111827', margin: '0 0 0.25rem' }}>
-                <strong>{task.boldNote}</strong>
-                {task.note && ` ${task.note}`}
-              </p>
-            )}
-            {task.hasGuidelinesLink && (
-              <p style={{ fontSize: '0.875rem', color: '#111827', margin: '0.25rem 0 0' }}>
-                Guidelines for reading annotations can be found{' '}
-                <a href="#" style={{ color: NAVY }}>
-                  here.
-                </a>
-              </p>
-            )}
           </div>
         )}
 
@@ -191,31 +134,42 @@ export default function TaskModal({ task, onClose }) {
         <div style={{ marginBottom: '1.5rem' }}>
           <span style={{ fontSize: '0.85rem', color: '#374151' }}>Submission Type(s):</span>
           <br />
-          <span style={{ fontSize: '0.875rem', color: '#111827' }}>{task.submissionType}</span>
+          <span style={{ fontSize: '0.875rem', color: '#111827', textTransform: 'replace' }}>
+            {task.submissionType === 'none' ? 'None' : task.submissionType?.replace(/_/g, ' ')}
+          </span>
         </div>
 
         {/* Action buttons */}
         <div style={{ display: 'flex', gap: '0.75rem' }}>
           <button
+            onClick={handleAddToCalendar}
+            disabled={gcStatus === 'adding' || gcStatus === 'added'}
             style={{
               flex: 1,
-              backgroundColor: NAVY,
+              backgroundColor: gcStatus === 'added' ? '#16a34a' : NAVY,
               color: '#ffffff',
               border: 'none',
               borderRadius: '8px',
               padding: '0.75rem 1rem',
               fontSize: '0.875rem',
               fontWeight: 600,
-              cursor: 'pointer',
+              cursor: gcStatus === 'adding' || gcStatus === 'added' ? 'default' : 'pointer',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
+              opacity: gcStatus === 'adding' ? 0.7 : 1,
             }}
           >
-            Add due date to Google Calendar
-            <ExternalLinkIcon />
+            {gcStatus === 'added' ? '✓ Added to Calendar' :
+             gcStatus === 'adding' ? 'Adding…' :
+             gcStatus === 'error' ? 'Failed — Try Again' :
+             gcConnected ? 'Add to Google Calendar' : 'Connect & Add to Calendar'}
+            {gcStatus !== 'added' && gcStatus !== 'adding' && <ExternalLinkIcon />}
           </button>
-          <button
+          <a
+            href={task.htmlUrl}
+            target="_blank"
+            rel="noopener noreferrer"
             style={{
               flex: 1,
               backgroundColor: '#ffffff',
@@ -229,11 +183,12 @@ export default function TaskModal({ task, onClose }) {
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
+              textDecoration: 'none',
             }}
           >
             Go to assignment
             <ExternalLinkIcon />
-          </button>
+          </a>
         </div>
       </div>
     </>

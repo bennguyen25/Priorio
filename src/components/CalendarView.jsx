@@ -12,17 +12,17 @@ const HOUR_LABELS = Array.from({ length: 24 }, (_, i) => {
   return `${i - 12} PM`
 })
 
-// Base week: Sun Feb 15, 2026
-const BASE_DATE = new Date(2026, 1, 15)
-
-const ALL_DAY_EVENTS = [
-  { id: 1, title: "Washington's Birthday", dayIndex: 1, bg: '#1a73e8', text: '#fff' },
-]
-
 function getWeekDates(offset) {
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+  const day = today.getDay()
+  const monday = new Date(today)
+  monday.setDate(today.getDate() + (day === 0 ? -6 : 1 - day) + offset * 7)
+  const sunday = new Date(monday)
+  sunday.setDate(monday.getDate() - 1)
   return Array.from({ length: 7 }, (_, i) => {
-    const d = new Date(BASE_DATE)
-    d.setDate(BASE_DATE.getDate() + offset * 7 + i)
+    const d = new Date(sunday)
+    d.setDate(sunday.getDate() + i)
     return d
   })
 }
@@ -59,14 +59,54 @@ function PrintIcon() {
   )
 }
 
-export default function CalendarView() {
-  const [weekOffset, setWeekOffset] = useState(0)
+const EVENT_COLORS = ['#1a73e8', '#d93025', '#f4511e', '#0b8043', '#8430ce', '#e52592']
+
+function parseEvent(event, weekDates) {
+  const start = event.start?.dateTime ? new Date(event.start.dateTime) : null
+  const end = event.end?.dateTime ? new Date(event.end.dateTime) : null
+  const isAllDay = !start
+
+  if (isAllDay) {
+    const d = new Date(event.start.date)
+    const dayIdx = weekDates.findIndex(wd =>
+      wd.getDate() === d.getDate() && wd.getMonth() === d.getMonth()
+    )
+    return dayIdx >= 0 ? { isAllDay: true, dayIdx, title: event.summary || '(No title)', colorIdx: Math.abs(event.id?.charCodeAt(0) ?? 0) % EVENT_COLORS.length } : null
+  }
+
+  const dayIdx = weekDates.findIndex(wd =>
+    wd.getDate() === start.getDate() && wd.getMonth() === start.getMonth()
+  )
+  if (dayIdx < 0) return null
+
+  const startHour = start.getHours() + start.getMinutes() / 60
+  const endHour = end ? (end.getHours() + end.getMinutes() / 60) : startHour + 1
+  return {
+    isAllDay: false,
+    dayIdx,
+    title: event.summary || '(No title)',
+    startHour,
+    height: Math.max((endHour - startHour) * HOUR_H, 18),
+    top: startHour * HOUR_H,
+    colorIdx: Math.abs(event.id?.charCodeAt(0) ?? 0) % EVENT_COLORS.length,
+  }
+}
+
+export default function CalendarView({ events = [], weekOffset: externalOffset, onWeekChange }) {
+  const [internalOffset, setInternalOffset] = useState(0)
+  const weekOffset = externalOffset !== undefined ? externalOffset : internalOffset
+  const setWeekOffset = onWeekChange || setInternalOffset
+
   const scrollRef = useRef(null)
   const weekDates = getWeekDates(weekOffset)
 
+  const parsedEvents = events.map(e => parseEvent(e, weekDates)).filter(Boolean)
+  const allDayEvents = parsedEvents.filter(e => e.isAllDay)
+  const timedEvents = parsedEvents.filter(e => !e.isAllDay)
+
   useEffect(() => {
     if (scrollRef.current) {
-      scrollRef.current.scrollTop = 8 * HOUR_H // scroll to 8 AM
+      scrollRef.current.scrollTop = 8 * HOUR_H
     }
   }, [])
 
@@ -199,39 +239,15 @@ export default function CalendarView() {
         >
           All day
         </div>
-        {weekDates.map((_, i) => {
-          const events = weekOffset === 0 ? ALL_DAY_EVENTS.filter((e) => e.dayIndex === i) : []
-          return (
-            <div
-              key={i}
-              style={{
-                flex: 1,
-                padding: '4px 3px',
-                borderLeft: i > 0 ? '1px solid #f3f4f6' : 'none',
-              }}
-            >
-              {events.map((e) => (
-                <div
-                  key={e.id}
-                  style={{
-                    backgroundColor: e.bg,
-                    color: e.text,
-                    borderRadius: '4px',
-                    padding: '1px 6px',
-                    fontSize: '0.72rem',
-                    fontWeight: 500,
-                    overflow: 'hidden',
-                    whiteSpace: 'nowrap',
-                    textOverflow: 'ellipsis',
-                    cursor: 'pointer',
-                  }}
-                >
-                  {e.title}
-                </div>
-              ))}
-            </div>
-          )
-        })}
+        {weekDates.map((_, i) => (
+          <div key={i} style={{ flex: 1, padding: '4px 3px', borderLeft: i > 0 ? '1px solid #f3f4f6' : 'none' }}>
+            {allDayEvents.filter(e => e.dayIdx === i).map((e, j) => (
+              <div key={j} style={{ backgroundColor: EVENT_COLORS[e.colorIdx], color: '#fff', borderRadius: '4px', padding: '1px 6px', fontSize: '0.72rem', fontWeight: 500, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>
+                {e.title}
+              </div>
+            ))}
+          </div>
+        ))}
       </div>
 
       {/* ── Scrollable time grid ─────────────────────────────────────────── */}
@@ -276,23 +292,32 @@ export default function CalendarView() {
         {/* Day columns */}
         <div style={{ flex: 1, display: 'flex' }}>
           {weekDates.map((_, dayIdx) => (
-            <div
-              key={dayIdx}
-              style={{
-                flex: 1,
-                borderLeft: '1px solid #f3f4f6',
-                position: 'relative',
-              }}
-            >
+            <div key={dayIdx} style={{ flex: 1, borderLeft: '1px solid #f3f4f6', position: 'relative' }}>
               {HOUR_LABELS.map((_, hourIdx) => (
+                <div key={hourIdx} style={{ height: HOUR_H, borderTop: hourIdx > 0 ? '1px solid #f3f4f6' : 'none', boxSizing: 'border-box' }} />
+              ))}
+              {timedEvents.filter(e => e.dayIdx === dayIdx).map((e, j) => (
                 <div
-                  key={hourIdx}
+                  key={j}
                   style={{
-                    height: HOUR_H,
-                    borderTop: hourIdx > 0 ? '1px solid #f3f4f6' : 'none',
-                    boxSizing: 'border-box',
+                    position: 'absolute',
+                    top: e.top,
+                    left: '2px',
+                    right: '2px',
+                    height: e.height,
+                    backgroundColor: EVENT_COLORS[e.colorIdx],
+                    borderRadius: '4px',
+                    padding: '2px 5px',
+                    fontSize: '0.68rem',
+                    fontWeight: 500,
+                    color: '#fff',
+                    overflow: 'hidden',
+                    cursor: 'pointer',
+                    zIndex: 1,
                   }}
-                />
+                >
+                  {e.title}
+                </div>
               ))}
             </div>
           ))}
