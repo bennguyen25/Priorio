@@ -12,14 +12,23 @@ export function initGoogleAuth(onConnected) {
     callback: (response) => {
       if (response.access_token) {
         accessToken = response.access_token
+        localStorage.setItem('gc_authorized', '1')
         onConnected()
       }
     },
+    error_callback: () => {
+      // Silent auth failed — user will need to connect manually
+    },
   })
+
+  // If user previously connected, try to get a token silently (no popup)
+  if (localStorage.getItem('gc_authorized')) {
+    tokenClient.requestAccessToken({ prompt: '' })
+  }
 }
 
 export function connectGoogleCalendar() {
-  if (tokenClient) tokenClient.requestAccessToken()
+  if (tokenClient) tokenClient.requestAccessToken({ prompt: 'consent' })
 }
 
 export function isGoogleConnected() {

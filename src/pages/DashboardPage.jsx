@@ -1,6 +1,7 @@
 import { useState, useMemo, useEffect, useCallback } from 'react'
 import canvasData from '../data/canvas-snapshot.json'
 import { initGoogleAuth, connectGoogleCalendar, isGoogleConnected, fetchCalendarEvents } from '../services/googleCalendar'
+import { auth } from '../firebase'
 
 function getMonday(date) {
   const d = new Date(date)
@@ -367,7 +368,7 @@ function WeeklyPanel({ courses, allTasks, onTaskClick, gcConnected, onConnectGC 
 
 // ─── Right Panel (AI Chat) ────────────────────────────────────────────────────
 
-function ChatPanel() {
+function ChatPanel({ firstName }) {
   const [input, setInput] = useState('')
 
   return (
@@ -403,7 +404,7 @@ function ChatPanel() {
             margin: 0,
           }}
         >
-          Hello David,
+          Hello {firstName},
           <br />
           How can I help you
           <br />
@@ -497,6 +498,7 @@ export default function DashboardPage() {
   const [selectedTask, setSelectedTask] = useState(null)
   const [gcConnected, setGcConnected] = useState(false)
   const { courses, tasks: allTasks } = canvasData
+  const firstName = auth.currentUser?.displayName?.split(' ')[0] ?? 'there'
 
   useEffect(() => {
     const tryInit = () => {
@@ -530,7 +532,7 @@ export default function DashboardPage() {
 
       {/* Right panel */}
       <div style={{ flex: 1, overflow: 'hidden' }}>
-        <ChatPanel />
+        <ChatPanel firstName={firstName} />
       </div>
     </div>
   )
